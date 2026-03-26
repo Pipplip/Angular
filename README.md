@@ -887,7 +887,8 @@ ___
 #### @Input() und @Output()
 In Angular werden `@Input()` und `@Output()` verwendet, um die Kommunikation zwischen Components zu ermöglichen.
 - `@Input()`: Wird verwendet, um Daten von einer übergeordneten Component an eine untergeordnete Component zu übergeben. Es ermöglicht der übergeordneten Component, Werte an die untergeordnete Component zu binden. Zum Beispiel:
-```// child.component.ts
+```typescript
+// child.component.ts
 import { Component, Input } from '@angular/core';
 @Component({
   selector: 'app-child',
@@ -901,7 +902,8 @@ export class ChildComponent {
 ```
 In diesem Beispiel erhält die `ChildComponent` eine Nachricht von der `ParentComponent` über das `@Input()`-Property `message`. Die `ParentComponent` bindet ihre `parentMessage`-Variable an das `message`-Input der `ChildComponent`.
 - `@Output()`: Wird verwendet, um Ereignisse von einer untergeordneten Component an eine übergeordnete Component zu senden. Es ermöglicht der untergeordneten Component, Ereignisse auszulösen, die von der übergeordneten Component behandelt werden können. Zum Beispiel:
-```// child.component.ts
+```typescript
+// child.component.ts
 import { Component, Output, EventEmitter } from '@angular/core';
 @Component({
   selector: 'app-child',
@@ -923,7 +925,8 @@ Zusammen ermöglichen `@Input()` und `@Output()` eine effektive Kommunikation zw
 #### GeschwisterComponents
 In Angular können GeschwisterComponents (Sibling Components) auf verschiedene Weise miteinander kommunizieren, da sie sich auf derselben Ebene im Componentsbaum befinden und keine direkte Eltern-Kind-Beziehung haben. Hier sind einige gängige Methoden, um die Kommunikation zwischen GeschwisterComponents zu ermöglichen:
 1. **Gemeinsame Parent-Component (nicht bevorzugt)**: Eine Möglichkeit besteht darin, die gemeinsame Parent-Component als Vermittler zu verwenden. Die GeschwisterComponents können Daten oder Ereignisse an die Parent-Component senden, die diese Informationen dann an die andere GeschwisterComponent weiterleitet. Zum Beispiel:
-```// parent.component.ts
+```typescript
+// parent.component.ts
 import { Component } from '@angular/core';
 @Component({
   selector: 'app-parent',
@@ -962,7 +965,8 @@ export class SiblingTwoComponent {
 ```
 In diesem Beispiel sendet `SiblingOneComponent` eine Nachricht an die `ParentComponent`, die diese Nachricht empfängt und an `SiblingTwoComponent` weiterleitet.
 2. **Gemeinsamer Service (bevorzugt)**: Eine andere Möglichkeit besteht darin, einen gemeinsamen Service zu verwenden, der von beiden GeschwisterComponents injiziert wird. Der Service kann als zentraler Speicher für Daten oder als Event-Bus fungieren, um Informationen zwischen den GeschwisterComponents auszutauschen. Zum Beispiel:
-```// message.service.ts
+```typescript
+// message.service.ts
 import { Injectable } from '@angular/core';
 import { Subject } from 'rxjs';
 @Injectable({
