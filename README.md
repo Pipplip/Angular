@@ -8,6 +8,7 @@
 
 - [Grundlagen & Setup](#grundlagen--setup)
     - [Quickstart](#quickstart)
+    - [Automatisiertes Bauen](#automatisiertes-bauen)
     - [Namenskonvention](#namenskonvention)
 - [Architektur & Bootstrapping](#architektur--bootstrapping)
 - [Wichtige Konzepte](#wichtige-konzepte)
@@ -36,7 +37,10 @@ https://www.angulararchitects.io/blog/angular-tutorial-teil-1-werkzeuge-und-erst
 
 Voraussetzung: Node JS, Angular CLI
 
-**Node JS:**   
+**ACHTUNG:**  Der gradle build ist so konfiguriert, dass er die Angular App automatisch baut.   
+Es ist also nicht notwendig, Node, Angular CLI manuell zu installieren oder zu verwenden.
+
+**Node JS: (Global installieren)**   
 Node JS installieren: https://nodejs.org/en/   
 Version prüfen: `node -v` in Konsole
 
@@ -55,7 +59,6 @@ Version prüfen: `ng version`
 <p align="right">(<a href="#top">nach oben</a>)</p>
 
 ---
-
 ## Quickstart
 
 Neues Projekt anlegen:   
@@ -94,6 +97,178 @@ Die AppComponent findet sich in `src/app` (app.component.ts, *.html, *.css)
 Den Titel kann man in der `.ts` ändern und den Inhalt der html löschen und `<h1>{{title}}</h1>`   
 Seite wird automatisch aktualisiert.
 
+
+<p align="right">(<a href="#top">nach oben</a>)</p>
+
+___
+## Automatisiertes Bauen
+
+Aufbau des Projekts:
+```
+<root>
+ ├── openapi/
+ │    └── openapi.yaml
+ ├── frontend/
+ │    ├── package.json
+ │    ├── angular.json
+ │    ├── tsconfig.json
+ │    └── src/
+ │        └── app/
+ │            └── openapi/ // automatisch generierte API-Client Dateien
+ ├── build.gradle.kts
+ ├── build/
+ ```
+
+1. Voraussetzung `package.json` im Projektverzeichnis
+```json
+{
+  "name": "my-project",
+  "version": "0.0.1",
+  "scripts": {
+    "ng": "ng",
+    "start": "ng serve --open",
+    "build": "ng build",
+    "watch": "ng build --watch --configuration development",
+    "test": "ng test",
+    "lint": "ng lint",
+    "e2e": "ng e2e"
+  },
+  "private": true,
+  "dependencies": {
+    "@angular/animations": "^21.2.0",
+    "@angular/common": "^21.2.0",
+    "@angular/compiler": "^21.2.0",
+    "@angular/core": "^21.2.0",
+    "@angular/forms": "^21.2.0",
+    "@angular/platform-browser": "^21.2.0",
+    "@angular/platform-browser-dynamic": "^21.2.0",
+    "@angular/router": "^21.2.0",
+    "rxjs": "~7.8.0",
+    "tslib": "^2.3.0",
+    "zone.js": "~0.16.0"
+  }
+}
+```
+
+2. `build.gradle.kts`
+```groovy
+import com.github.gradle.node.npm.task.NpmTask
+import org.openapitools.generator.gradle.plugin.tasks.GenerateTask
+
+plugins {
+    id("org.openapi.generator") version "7.3.0"
+    id("com.github.node-gradle.node") version "7.0.2"
+}
+
+val openApiSpec = "$rootDir/openapi/openapi.yaml"
+
+//  Backend API bauen (Spring Boot Interfaces)
+val generateBackend = tasks.register<GenerateTask>("generateBackend") {
+    generatorName.set("kotlin-spring")
+    inputSpec.set(openApiSpec)
+    outputDir.set(layout.buildDirectory.dir("generated/backend").get().asFile.absolutePath)
+
+    apiPackage.set("com.example.api")
+    modelPackage.set("com.example.model")
+
+    configOptions.set(
+            mapOf(
+                    "delegatePattern" to "true",
+                    "interfaceOnly" to "false",
+                    "useSpringBoot3" to "true",
+                    "useTags" to "true",
+                    "generateApiDocumentation" to "true",
+                    "generateModelDocumentation" to "true",
+                    "serializationLibrary" to "kotlinx_serialization",
+                    "dateLibrary" to "java8",
+                    "hideGenerationTimestamp" to "true",
+            )
+    )
+}
+
+//  Frontend API Client
+val generateFrontend = tasks.register<GenerateTask>("generateFrontend") {
+    generatorName.set("typescript-angular")
+    inputSpec.set(openApiSpec)
+    outputDir.set(layout.buildDirectory.dir("generated/frontend").get().asFile.absolutePath)
+
+    configOptions.set(
+            mapOf(
+                    "providedInRoot" to "true",
+                    "ngVersion" to "21"
+            )
+    )
+}
+
+// Node setup
+node {
+    version = "20.11.0"
+    npmVersion = "10.2.4"
+    download = true
+    nodeProjectDir.set(file("${project.projectDir}/frontend"))
+}
+// *******************************
+// TASKS
+//  Copy generated frontend API → Angular src
+val copyFrontendApi = tasks.register<Copy>("copyFrontendApi") {
+    dependsOn(generateFrontend)
+    from("$buildDir/generated/frontend")
+    into("$projectDir/frontend/src/app/api")
+}
+
+//  npm install
+val npmInstall = tasks.named("npmInstall") {
+    dependsOn(copyFrontendApi)
+}
+
+// Angular Build
+val buildFrontend = tasks.register<NpmTask>("buildFrontend") {
+    dependsOn(npmInstall)
+    args.set(listOf("run", "build"))
+}
+
+//  Copy Angular → Spring Boot static
+val copyFrontend = tasks.register<Copy>("copyFrontend") {
+    dependsOn(buildFrontend)
+    from("$projectDir/frontend/dist/myProject")
+    into(layout.buildDirectory.dir("resources/main/static"))
+}
+
+//  Backend Build
+tasks.named("compileKotlin") {
+    dependsOn(generateBackend)
+}
+
+// Gesamt-Build - Einstiegspunkt bei ./gradlew build
+tasks.named("build") {
+    dependsOn(copyFrontend)
+}
+```
+
+3. Projekt bauen:    
+`./gradlew build` // startet den task `tasks.named("build")`
+
+Ablauf:   
+```
+build
+└── copyFrontend
+└── buildFrontend
+└── npmInstall
+└── copyFrontendApi
+└── generateFrontend
+
+parallel:
+compileKotlin
+└── generateBackend
+```
+
+Single source of truth:
+```
+    openapi.yaml
+/                   \
+↓                    ↓
+generateBackend  generateFrontend
+```
 
 <p align="right">(<a href="#top">nach oben</a>)</p>
 
@@ -175,6 +350,20 @@ Neuen Service generieren:
 `ng generate service friend`
 
 Es entsteht nur eine neue `.ts` Datei
+```typescript
+import { Injectable } from '@angular/core';
+@Injectable({
+  providedIn: 'root' // Service wird auf Root-Level bereitgestellt, d.h. überall in der App verfügbar
+})
+export class FriendService {
+  constructor() { }
+  getFriends() {
+    return ['Anna', 'Max', 'Lisa'];
+    // hier könnte auch ein HTTP Request stehen, um die Freunde von einem Server zu holen
+  }
+}
+
+```
 
 Beispiel: `export class FriendService` injection in Component:
 ```typescript
@@ -186,6 +375,10 @@ import { FriendService } from './friend.service';
 })
 export class FriendComponent {
   constructor(private friendService: FriendService) {} // Service wird hier injiziert und kann in der Component verwendet werden
+  
+  getFriends() {
+    return this.friendService.getFriends(); // Aufruf der Methode im Service, um die Freunde zu bekommen
+  }
 }
 ```
 <p align="right">(<a href="#top">nach oben</a>)</p>
@@ -239,7 +432,7 @@ Ein Signal ist eine Funktion, die einen Wert enthält und diesen Wert zurückgib
 > Signals sind eher für State in Komponenten.   
 > RxJS ist eher für Events, Streams und HTTP.
 
-Beispiel:
+Beispiel Signal in einer Component:
 ```typescript
 import { Component, signal } from '@angular/core';
 
@@ -260,6 +453,28 @@ export class CounterComponent {
 ```
 In diesem Beispiel wird ein Signal namens `count` erstellt, das den aktuellen Zählerstand hält. Wenn der Button geklickt wird, wird die `increment()`-Methode aufgerufen, die den Wert des Signals aktualisiert. Das Template zeigt automatisch den aktuellen Wert von `count` an, ohne dass manuelle Abonnements oder Change Detection erforderlich sind.  
 Signals bieten eine einfache und effiziente Möglichkeit, reaktive Daten in Angular zu verwalten, und können in vielen Fällen die Komplexität von Observables und manueller Change Detection reduzieren.
+
+
+Beispiel Signal in einem Service:   
+```typescript
+import { Injectable, signal } from '@angular/core';
+@Injectable({
+  providedIn: 'root'
+})
+export class CounterService {
+    private _selectedVehicleId = signal<string>('');
+    selectedVehicleId = this._selectedVehicleId.asReadonly();
+
+  changeVehicle() {
+    this._selectedVehicleId.set("12345")// Beispiel: Fahrzeug-ID aktualisieren
+  }
+}
+```
+In diesem Beispiel wird ein Signal namens `_selectedVehicleId` in einem Service erstellt, das die ID des ausgewählten Fahrzeugs hält.    
+Die Methode `changeVehicle()` aktualisiert den Wert des Signals, indem sie eine neue ID generiert.   
+Das Signal wird als readonly exportiert, damit andere Teile der Anwendung den Wert lesen, aber nicht direkt ändern können.
+
+
 
 Lesen und Schreiben von Signals:
 - Lesen: `count()` - Ruft den aktuellen Wert des Signals ab.
@@ -514,6 +729,19 @@ AuthService erstellen:
 AuthGuard in den Routen verwenden:   
 In `app-routing.module.ts` AuthGuard hinzufügen.
 
+Beispiel:
+```typescript
+export const authGuard: CanActivateFn = (route: ActivatedRouteSnapshot, state: RouterStateSnapshot) => {
+    const authService = inject(AuthService);
+    const router = inject(Router);
+    if (authService.isAuthenticated) {
+        return true;
+    }
+    router.navigate(['/login'], { queryParams: { returnUrl: state.url } });
+    return false;
+};
+```
+
 <p align="right">(<a href="#top">nach oben</a>)</p>
 
 ___
@@ -538,6 +766,9 @@ In diesem Beispiel wird die `currency`-Pipe verwendet, um den `amount`-Wert als 
 ---
 ## Interceptor
 
+Interceptor kann man als Middleware für HTTP-Anfragen und -Antworten verstehen.  
+Intercept heißt so viel wie "abfangen" oder "unterbrechen". Interceptors fangen HTTP-Anfragen und -Antworten ab, bevor sie die Anwendung erreichen oder an den Server gesendet werden.   
+
 In Angular ist ein Interceptor eine spezielle Art von Service, der es ermöglicht, HTTP-Anfragen und -Antworten zu verändern oder zu überwachen.    
 Er wird in der Regel verwendet, um bestimmte Operationen global auf alle HTTP-Requests oder -Responses anzuwenden, bevor diese die Anwendung erreichen oder an den Server gesendet werden.    
 Interceptors sind Teil des HttpClient-Moduls und bieten eine mächtige Möglichkeit, zusätzliche Logik wie Authentifizierung, Fehlerbehandlung oder das Hinzufügen von Headern hinzuzufügen.
@@ -552,6 +783,34 @@ Hauptanwendungsfälle für Interceptors:
 
 Erstellen eines Interceptors:   
 `ng generate interceptor [name]`
+
+Beispiel eines Interceptors, der einen Authentifizierungstoken hinzufügt:
+```typescript
+@Injectable()
+export const authInterceptor: HttpInterceptorFn = (req, next) => {
+    const authToken = 'my-auth-token'; // Hier könnte auch ein Token aus einem AuthService geholt werden
+
+    // Intercept Request: Request klonen und Header setzen
+    const authReq = req.clone({
+        headers: req.headers.set('Authorization', `Bearer ${authToken}`)
+    });
+
+    // Request senden + Response behandeln
+    return next(authReq).pipe(
+        catchError((error) => {
+            if (error?.status === 401) {
+                console.log('[AuthInterceptor] 401 → logout');
+                auth.logout();
+
+                if (router.url !== '/login') {
+                    void router.navigate(['/login'], { replaceUrl: true });
+                }
+            }
+            return throwError(() => error);
+        })
+    );
+}
+```
 
 <p align="right">(<a href="#top">nach oben</a>)</p>
 
@@ -593,10 +852,10 @@ In Angular gibt es verschiedene Arten von Bindings, die verwendet werden, um Dat
 **Direktiven**   
 sind spezielle Anweisungen, die das Verhalten von DOM-Elementen oder Components in Angular ändern. Es gibt verschiedene Arten von Direktiven, darunter:
 1. **Template Reference Variables**: Werden verwendet, um eine Referenz auf ein DOM-Element oder eine Component im Template zu erstellen. Zum Beispiel: `<input #myInput>` erstellt eine Referenz namens `myInput`, die in der Component verwendet werden kann, um auf das `input`-Element zuzugreifen.
-2. **Structural Directives**: Werden verwendet, um die Struktur des DOM basierend auf Bedingungen zu ändern. Zum Beispiel: `<div *ngIf="isVisible">Content</div>` zeigt den `div`-Block nur an, wenn die `isVisible`-Variable in der Component `true` ist. Beispiele:
-    1. `*ngIf`
-    2. `*ngFor`
-    3. `*ngSwitch`
+2. **Structural Directives**: Werden verwendet, um die Struktur des DOM basierend auf Bedingungen zu ändern. Zum Beispiel: `@if(isVisible){ <div>Content</div> }` zeigt den `div`-Block nur an, wenn die `isVisible`-Variable in der Component `true` ist. Beispiele:
+    1. `@if`, `@else` (ab Angular 21) - neue Syntax für strukturelle Direktiven
+    2. `@for` Beispiel: `@for(let item of items){ <div>{{item}}</div> }`
+    3. `@switch`
 
 
 Liste an wichtigen Event-Bindings:
